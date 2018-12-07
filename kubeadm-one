@@ -17,7 +17,7 @@ Overview:
     ~/.kube/config.remote
   * Run a sequence of tests to ensure the cluster is healthly.
 
-  This tool has only been tested on Ubuntu 18.04LTS.
+  This tool has only been tested on Ubuntu 18.04 LTS amd64.
 
 Usage:
   sudo $0 --local-only [--force]
@@ -25,7 +25,7 @@ Usage:
   $0 -h | --help
 
 Warning:
-* If the intention is to remotely access this single node kubernetes cluster,
+* If your intention is to remotely access this single node kubernetes cluster,
   then you must set a DNS name or IP for the --apiserver-cert-extra-sans option
   below.  This will generate a cluster auth certificate with the right machine
   identifier, which the kubectl client will insist on verifying.
@@ -45,6 +45,12 @@ Options:
                 in the KUBECONFIG file which is generated for remote cluster
                 access.
               * Setting this must be exclusive of '--local-only'
+  -p=<string> --pod-network-cidr=<string>
+              * Specify range of IP addresses for the pod network. If set, the
+                control plane will automatically allocate CIDRs for every node.
+                Default: '--pod-network-cidr=10.244.0.0/16'
+  -d --dotfiles
+              * Will setup dotfiles in a machine (e.g. for vagrant installs)
   -f --force  * Do not prompt.  Assume yes for all prompts
               * If kubeadm is has already run, this will reset it without prompt
   -h --help     Show this screen
@@ -70,6 +76,14 @@ function main() {
                 APISERVER_CERT_EXTRA_SANS="${i#*=}"
                 shift # past argument=value
                 ;;
+            -p=*|--pod-network-cidr=*)
+                POD_NETWORK_CIDR="${i#*=}"
+                shift # past argument=value
+                ;;
+            -d|--dotfiles)
+                DOTFILES=true
+                shift # past argument=value
+                ;;
             -f|--force)
                 FORCE=true
                 shift # past argument=value
@@ -89,13 +103,16 @@ function main() {
 
     # Set default values if unset (compatible with ENV vars)
     LOCAL_ONLY=${LOCAL_ONLY:-false}
+    DOTFILES=${DOTFILES:-false}
     FORCE=${FORCE:-false}
     APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS:-}
+    POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
 
     # Print current settings
     echo "Current Settings"
     echo "  LOCAL_ONLY=${LOCAL_ONLY}"
     echo "  APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS}"
+    echo "  DOTFILES=${DOTFILES}"
     echo "  FORCE=${FORCE}"
     echo
 
@@ -114,7 +131,7 @@ function main() {
     # Ensure this script is run via sudo
     if [[ -z ${SUDO_USER:-} ]]; then
         echo "Please run this script via sudo as a non-root user"
-        echo "  sudo $0"
+        echo "  sudo $0 $@"
         exit 1
     fi    
 
@@ -127,8 +144,7 @@ function main() {
     ###########################################################
     # Main program
 
-    if [[ "$SUDO_USER" == "vagrant" ]]; then
-	# Only add dotfiles to a vagrant machine
+    if [[ "$DOTFILES" == "true" ]]; then
 	install_system_conveniences
     fi
 
@@ -158,7 +174,7 @@ function main() {
 
     # Initialize the single node kubernetes cluster
     if ! kubectl cluster-info &>/dev/null; then
-        initialize_kubeadm $APISERVER_CERT_EXTRA_SANS
+        initialize_kubeadm $APISERVER_CERT_EXTRA_SANS $POD_NETWORK_CIDR
     fi
 
     # Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
@@ -266,9 +282,11 @@ function initialize_kubeadm() {
         apiserver_cert_extra_sans="--apiserver-cert-extra-sans=$1"
     fi
 
+    pod_network_cidr=$2
+
     # Initialize kubeadm
     kubeadm init \
-      --pod-network-cidr=10.244.0.0/16 \
+      --pod-network-cidr=$pod_network_cidr \
       --ignore-preflight-errors=NumCPU \
       $apiserver_cert_extra_sans
 }
