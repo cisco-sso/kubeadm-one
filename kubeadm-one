@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+set -ueo pipefail
+
+function usage() {
+    echo "
+Overview:
+
+  Tool for deploying a remotely-accessible single node kubernetes cluster on
+  linux using kubeadm.  It will:
+
+  * Setup a storageclass host-path provisioner which persists to disk
+  * Setup a software metallb loadbalancer service, integrated with kubernetes
+  * Run a sequence of tests to ensure the cluster is healthy
+  * Generate a local kubeconfig file replacing the sudo users's ~/.kube/config
+  * If not running in --local-only (e.g. '--apiserver-cert-extra-sans' is
+    defined), generate a remote-access kubeconfig file in sudo user's
+    ~/.kube/config.remote
+  * Run a sequence of tests to ensure the cluster is healthly.
+
+  This tool has only been tested on Ubuntu 18.04 LTS amd64.
+
+Usage:
+  sudo $0 --local-only [--force]
+  sudo $0 --apiserver-cert-extra-sans=<network-accessible-fqdn> [--force]
+  $0 -h | --help
+
+Warning:
+* If your intention is to remotely access this single node kubernetes cluster,
+  then you must set a DNS name or IP for the --apiserver-cert-extra-sans option
+  below.  This will generate a cluster auth certificate with the right machine
+  identifier, which the kubectl client will insist on verifying.
+* This program will not continue unless exactly one of '--local-only' or
+  '--apiserver-cert-extra-sans' are specified.
+
+Options:
+  -l --local-only
+              * Specifies a non-remotely accessible kubernetes instance.
+                Setting this must be exclusive of '--apiserver-cert-extra-sans'
+  -c=<stringSlice> --apiserver-cert-extra-sans=<stringSlice>
+              * Passes '--apiserver-cert-extra-sans' stringSlice to kubeadm.
+                Optional extra comma-separated Subject Alternative Names (SANs)
+                to use for the API Server serving certificate. Can be both IP
+                addresses and DNS names.  For example, 'api.kube.example.com'.
+              * The first name in the list will be embedded as the server URI
+                in the KUBECONFIG file which is generated for remote cluster
+                access.
+              * Setting this must be exclusive of '--local-only'
+  -p=<string> --pod-network-cidr=<string>
+              * Specify range of IP addresses for the pod network. If set, the
+                control plane will automatically allocate CIDRs for every node.
+                Default: '--pod-network-cidr=10.244.0.0/16'
+  -d --dotfiles
+              * Will setup dotfiles in a machine (e.g. for vagrant installs)
+  -f --force  * Do not prompt.  Assume yes for all prompts
+              * If kubeadm is has already run, this will reset it without prompt
+  -h --help     Show this screen
+"
+}
+
+function main() {
+    # If no parameters provided to command then print usage and exit
+    if [ $# -eq 0 ]; then
+        usage
+        exit 0
+    fi
+
+    # Parse Arguments
+    for i in "$@"
+    do
+        case $i in
+            -l|--local-only)
+                LOCAL_ONLY=true
+                shift # past argument=value
+                ;;
+            -c=*|--apiserver-cert-extra-sans=*)
+                APISERVER_CERT_EXTRA_SANS="${i#*=}"
+                shift # past argument=value
+                ;;
+            -p=*|--pod-network-cidr=*)
+                POD_NETWORK_CIDR="${i#*=}"
+                shift # past argument=value
+                ;;
+            -d|--dotfiles)
+                DOTFILES=true
+                shift # past argument=value
+                ;;
+            -f|--force)
+                FORCE=true
+                shift # past argument=value
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                shift # past argument=value
+                ;;
+            *)
+                # unknown option
+                echo "Unknown Option: ${i#*=}"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Set default values if unset (compatible with ENV vars)
+    LOCAL_ONLY=${LOCAL_ONLY:-false}
+    APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS:-}
+    POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
+    DOTFILES=${DOTFILES:-false}
+    FORCE=${FORCE:-false}
+
+    # Print current settings
+    echo "Current Settings"
+    echo "  LOCAL_ONLY=${LOCAL_ONLY}"
+    echo "  APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS}"
+    echo "  POD_NETWORK_CIDR=${POD_NETWORK_CIDR}"
+    echo "  DOTFILES=${DOTFILES}"
+    echo "  FORCE=${FORCE}"
+    echo
+
+    # Check local and remote install args
+    if [[ "$LOCAL_ONLY" == "true" ]] && [[ ! -z "$APISERVER_CERT_EXTRA_SANS" ]] ; then
+	echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
+	usage
+	exit 1
+    fi
+    if [[ "$LOCAL_ONLY" == "false" ]] && [[ -z "$APISERVER_CERT_EXTRA_SANS" ]] ; then
+	echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
+	usage
+	exit 1
+    fi
+
+    # Ensure this script is run via sudo
+    if [[ -z ${SUDO_USER:-} ]]; then
+        echo "Please run this script via sudo as a non-root user"
+        echo "  sudo $0 $@"
+        exit 1
+    fi    
+
+    # Ensure this script is only run on linux
+    if [[ $(uname -o) != "GNU/Linux" ]]; then
+        echo "This script can only run on Linux"
+        exit 1
+    fi
+
+    ###########################################################
+    # Main program
+
+    if [[ "$DOTFILES" == "true" ]]; then
+	install_system_conveniences
+    fi
+
+    # Permanently disable swap, since kubernetes will not work with swap
+    disable_swap
+
+    # Install Docker only if not already installed
+    if ! command -v docker; then
+        install_docker
+    fi
+
+    # Install kubernetes services only if not already installed
+    if ! command -v kubectl; then
+        install_kubernetes_services
+    fi
+
+    # If kubeadm is installed but kubernetes is not running, then reset kubeadmin
+    if command -v kubeadm && ! kubectl cluster-info && [[ -f /etc/kubernetes/pki/apiserver.crt ]]; then
+	if [[ "$FORCE" == "true" ]]; then
+	    kubeadm reset -f
+	else
+	    kubeadm reset
+	fi
+	# Remove any old leftover test-pvc's from failed installs
+	rm -f /var/kubernetes/default-hostpath-test-claim-pvc-*
+    fi
+
+    # Initialize the single node kubernetes cluster
+    if ! kubectl cluster-info &>/dev/null; then
+        initialize_kubeadm $APISERVER_CERT_EXTRA_SANS $POD_NETWORK_CIDR
+    fi
+
+    # Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
+    configure_kubernetes
+
+    # Test that the loadbalancer and storageclass provider work
+    verify_setup
+
+    # Create the kubeconfig files
+    #   Send in the first commma-separted element of the APISERVER_CERT_EXTRA_SANS list or ""
+    configure_kubeconfig "$(cut -d ',' -f 1 <<< $APISERVER_CERT_EXTRA_SANS)"
+
+    exit 0
+}
+
+#####################################################################
+# Functions
+
+function install_system_conveniences() {
+    apt-get -y update
+
+    # Install a basic editor
+    if ! command -v emacs; then
+        apt-get -y install emacs-nox
+    fi
+
+    # Install the dotfiles tool yadm
+    if ! command -v yadm; then
+        apt-get -y install yadm
+    fi
+
+    # Setup basic dotfiles
+    if [ ! -d ~/.yadm ]; then
+        yadm clone https://github.com/cisco-sso/yadm-dotfiles
+    fi
+}
+
+function disable_swap() {
+    # Permanently disable swap mounting in fstab
+    sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+
+    # Disable swap in the currently running OS
+    swapoff -a
+}
+
+function install_docker() {
+    # Copy/Pasta from: https://kubernetes.io/docs/setup/cri/#docker
+
+    # Install Docker from Ubuntu's repositories:
+    apt-get update
+    apt-get install -y docker.io
+
+    ## Install prerequisites.
+    apt-get update && apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+
+    ## Download GPG key.
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+
+    ## Add docker apt repository.
+    add-apt-repository \
+       "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+       $(lsb_release -cs) \
+       stable"
+
+    ## Install docker.
+    apt-get update && apt-get install -y docker-ce=18.06.0~ce~3-0~ubuntu
+
+    # Setup daemon.
+    cat > /etc/docker/daemon.json <<EOF
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+    mkdir -p /etc/systemd/system/docker.service.d
+
+    # Restart docker.
+    systemctl daemon-reload
+    systemctl restart docker
+}
+
+function install_kubernetes_services() {
+    # Copy/Pasta from: # https://kubernetes.io/docs/setup/independent/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl
+
+    apt-get update && apt-get install -y apt-transport-https curl
+    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+    cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+deb https://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+    apt-get update
+    apt-get install -y kubelet kubeadm kubectl
+    apt-mark hold kubelet kubeadm kubectl
+
+    # The kubelet is now restarting every few seconds, as it waits in a crashloop for kubeadm to tell it what to do.
+}
+
+function initialize_kubeadm() {
+    apiserver_cert_extra_sans=""
+    if [ ! -z $1 ]; then
+        apiserver_cert_extra_sans="--apiserver-cert-extra-sans=$1"
+    fi
+
+    pod_network_cidr=$2
+
+    # Initialize kubeadm
+    kubeadm init \
+      --pod-network-cidr=$pod_network_cidr \
+      --ignore-preflight-errors=NumCPU \
+      $apiserver_cert_extra_sans
+}
+
+function configure_kubernetes() {
+
+    # Configure kubeconfig for remainder of script
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+
+    ## Remove master taints
+    kubectl taint nodes --all node-role.kubernetes.io/master- || true
+
+    ## Deploy a pod network (e.g. flannel)
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
+
+    # Install helm
+    if ! command -v helm; then
+        curl https://raw.githubusercontent.com/helm/helm/master/scripts/get | sudo bash
+    fi
+
+    # Install tiller for RBAC
+    if ! kubectl get deployments -n kube-system | grep tiller; then
+        kubectl --namespace kube-system create serviceaccount tiller
+        kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
+        helm init --service-account tiller --wait
+        helm repo update
+    fi
+
+    # Get the IP of the default route interface
+    EXTERNAL_IP=$(ip route get 1.1.1.1 | grep -oP 'src \K\S+')
+    # Install MetalLB using Helm
+    #   Send chart overrides through sdtdin
+    #   NOTE: Non-floating IP is something like `192.168.1.7/32` in OpenStack.
+    if ! helm ls | grep metallb; then
+        helm install --name metallb stable/metallb -f - << EOF
+prometheus:
+  scrapeAnnotations: false
+configInline:
+  address-pools:
+  - name: default
+    protocol: layer2
+    addresses:
+    - $EXTERNAL_IP/32
+EOF
+    fi
+
+    # Install MaZderMind/hostpath-provisioner
+    #   ref: https://github.com/MaZderMind/hostpath-provisioner
+    kubectl apply -f https://raw.githubusercontent.com/MaZderMind/hostpath-provisioner/master/manifests/rbac.yaml
+    kubectl apply -f https://raw.githubusercontent.com/MaZderMind/hostpath-provisioner/master/manifests/deployment.yaml
+    kubectl apply -f https://raw.githubusercontent.com/MaZderMind/hostpath-provisioner/master/manifests/storageclass.yaml
+
+    # Install Ingress
+    if ! helm ls | grep nginx-ingress; then
+        helm install --name nginx-ingress stable/nginx-ingress -f - << EOF
+# Empty right now. Keeping this stub for future use.
+EOF
+    fi
+}
+
+function configure_kubeconfig() {
+    remote_access_uri=${1:-}
+
+    # Setup user's kubeconfig
+    mkdir -p $HOME/.kube
+    cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
+    echo "Local KUBECONFIG created at $HOME/.kube/config"
+
+    # Setup the remote kubeconfig
+    if [[ ! -z $remote_access_uri ]]; then
+	cp -f /etc/kubernetes/admin.conf $HOME/.kube/config.remote
+	sed -i 's/kubernetes-//g' $HOME/.kube/config.remote
+	sed -i "s/admin@kubernetes/$remote_access_uri/g" $HOME/.kube/config.remote
+	sed -i "s/kubernetes/$remote_access_uri/g" $HOME/.kube/config.remote
+
+	ingress_external_lb_ip=$(kubectl get svc| grep nginx-ingress-controller | awk '{print $4}')
+	sed -i "s/$ingress_external_lb_ip/$remote_access_uri/g" $HOME/.kube/config.remote
+
+	echo "Remote KUBECONFIG created at $HOME/.kube/config.remote"
+    fi
+
+    # Ensure ownership
+    chown -R $SUDO_UID:$SUDO_GID $HOME/.kube
+}
+
+function wait_check() {
+    noun=$1
+    adjective=$2
+    binary_test=$3
+    
+    echo "CHECK: Waiting for $noun to become $adjective"
+    error=true
+    for i in `seq 1 60`; do
+        if eval $binary_test &>/dev/null; then
+            echo "  SUCCESS: $noun have become $adjective"
+            error=false
+            break
+        else
+            echo "  WAITING: $noun have not yet become $adjective.  Trying again after 2 seconds"
+            error=true
+            sleep 2
+        fi
+    done
+    if $error; then
+        echo "  FAIL: $noun did not become $adjective"
+        exit 1
+    fi
+}
+
+
+function verify_setup() {
+
+    wait_check "Cluster" "Responsive" "kubectl cluster-info"
+    
+    echo "Create a test-pod writing to a test-pvc"
+    kubectl apply -f https://raw.githubusercontent.com/MaZderMind/hostpath-provisioner/master/manifests/test-claim.yaml
+    kubectl apply -f https://raw.githubusercontent.com/MaZderMind/hostpath-provisioner/master/manifests/test-pod.yaml
+
+    wait_check "All PODs" "Running" "[[ \$(kubectl get po --all-namespaces | grep -v -E '(STATUS|Running)' | wc -l) == 0 ]]"
+    wait_check "All PVCs" "Bound"   "[[ \$(kubectl get pvc --all-namespaces | grep -v -E '(STATUS|Bound)' | wc -l) == 0 ]]"
+    wait_check "All SVCs" "Up"      "[[ \$(kubectl get svc --all-namespaces | grep -i pending | wc -l) == 0 ]]"
+
+    ingress_external_lb_ip=$(kubectl get svc| grep nginx-ingress-controller | awk '{print $4}')
+    wait_check "Ingress Controller LoadBalancer Service" "Up" "curl $ingress_external_lb_ip &>/dev/null"
+
+    wait_check "Test-pvc disk resources" "Written" "ls -f /var/kubernetes/default-hostpath-test-claim-pvc-*/dates"
+    
+    echo "Removing test-pod and test-pvc resources"
+    kubectl delete pod hostpath-test-pod
+    kubectl delete pvc hostpath-test-claim
+
+    wait_check "Test-pvc disk resources" "Deleted" "! ls /var/kubernetes/default-hostpath-test-claim-pvc-*"
+}
+
+#####################################################################
+# Run the main program
+main "$@"
