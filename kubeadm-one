@@ -103,15 +103,16 @@ function main() {
 
     # Set default values if unset (compatible with ENV vars)
     LOCAL_ONLY=${LOCAL_ONLY:-false}
-    DOTFILES=${DOTFILES:-false}
-    FORCE=${FORCE:-false}
     APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS:-}
     POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
+    DOTFILES=${DOTFILES:-false}
+    FORCE=${FORCE:-false}
 
     # Print current settings
     echo "Current Settings"
     echo "  LOCAL_ONLY=${LOCAL_ONLY}"
     echo "  APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS}"
+    echo "  POD_NETWORK_CIDR=${POD_NETWORK_CIDR}"
     echo "  DOTFILES=${DOTFILES}"
     echo "  FORCE=${FORCE}"
     echo
