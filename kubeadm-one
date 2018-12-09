@@ -175,7 +175,7 @@ function main() {
 
     # Initialize the single node kubernetes cluster
     if ! kubectl cluster-info &>/dev/null; then
-        initialize_kubeadm $APISERVER_CERT_EXTRA_SANS $POD_NETWORK_CIDR
+        initialize_kubeadm "$APISERVER_CERT_EXTRA_SANS" "$POD_NETWORK_CIDR"
     fi
 
     # Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
@@ -279,11 +279,11 @@ EOF
 
 function initialize_kubeadm() {
     apiserver_cert_extra_sans=""
-    if [ ! -z $1 ]; then
+    if [ ! -z "$1" ]; then
         apiserver_cert_extra_sans="--apiserver-cert-extra-sans=$1"
     fi
 
-    pod_network_cidr=$2
+    pod_network_cidr="$2"
 
     # Initialize kubeadm
     kubeadm init \
@@ -357,7 +357,7 @@ function configure_kubeconfig() {
     echo "Local KUBECONFIG created at $HOME/.kube/config"
 
     # Setup the remote kubeconfig
-    if [[ ! -z $remote_access_uri ]]; then
+    if [[ ! -z "$remote_access_uri" ]]; then
 	cp -f /etc/kubernetes/admin.conf $HOME/.kube/config.remote
 	sed -i 's/kubernetes-//g' $HOME/.kube/config.remote
 	sed -i "s/admin@kubernetes/$remote_access_uri/g" $HOME/.kube/config.remote
