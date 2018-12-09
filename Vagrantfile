@@ -52,7 +52,7 @@ Vagrant.configure("2") do |config|
   config.vm.provider "virtualbox" do |vb|
     # Display the VirtualBox GUI when booting the machine
     vb.gui = false
-  
+
     # Customize the amount of memory on the VM:
     vb.memory = "4096"
   end
@@ -60,7 +60,7 @@ Vagrant.configure("2") do |config|
     # Customize the amount of memory on the VM:
     vb.memory = "4096"
   end
-  
+
   #
   # View the documentation for the provider you are using for more
   # information on available options.
@@ -76,7 +76,7 @@ Vagrant.configure("2") do |config|
 
   ###########################################################
   # Settings
-  
+
   $address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
   $fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube.example.com)
 
@@ -84,7 +84,7 @@ Vagrant.configure("2") do |config|
   # Network Configuration
   #  Hyperv ignores all network settings, so in order to get a static
   #    IP add an alias to eth0
-  
+
   config.vm.provision "shell",
                       privileged: false,
                       run: "always",
