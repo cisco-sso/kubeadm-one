@@ -236,9 +236,9 @@ function install_docker() {
 
     ## Add docker apt repository.
     add-apt-repository \
-       "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-       $(lsb_release -cs) \
-       stable"
+        "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) \
+        stable"
 
     ## Install docker.
     apt-get update && apt-get install -y docker-ce=18.06.0~ce~3-0~ubuntu
@@ -288,9 +288,9 @@ function initialize_kubeadm() {
     # Initialize kubeadm
     kubeadm config images pull
     kubeadm init \
-      --pod-network-cidr=$pod_network_cidr \
-      --ignore-preflight-errors=NumCPU \
-      $apiserver_cert_extra_sans
+        --pod-network-cidr=$pod_network_cidr \
+        --ignore-preflight-errors=NumCPU \
+        $apiserver_cert_extra_sans
 }
 
 function configure_kubernetes() {
@@ -344,7 +344,11 @@ EOF
     # Install Ingress
     if ! helm ls | grep nginx-ingress; then
         helm install --name nginx-ingress stable/nginx-ingress -f - << EOF
-# Empty right now. Keeping this stub for future use.
+# Enabling this allows external-dns access to host names serviced by ingress, so that
+# external-dns can set records in the DNS provider
+controller:
+  publishService:
+    enabled: true
 EOF
     fi
 }
