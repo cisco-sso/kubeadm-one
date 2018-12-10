@@ -18,8 +18,10 @@ git clone https://github.com/cisco-sso/kubeadm-one.git
 cd kubeadm-one
 
 # Customize the Vagrantfile settings
-#  $address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
-#  $fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube.example.com)
+$memory = 4096  # In megabytes
+$cpus   = 1
+$address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
+$fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
 
 # For OSX Virtualbox
 vagrant up

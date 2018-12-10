@@ -286,6 +286,7 @@ function initialize_kubeadm() {
     pod_network_cidr="$2"
 
     # Initialize kubeadm
+    kubeadm config images pull
     kubeadm init \
       --pod-network-cidr=$pod_network_cidr \
       --ignore-preflight-errors=NumCPU \

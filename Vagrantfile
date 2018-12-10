@@ -1,6 +1,14 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+###########################################################
+# Settings
+
+$memory = 4096  # In megabytes
+$cpus   = 1
+$address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
+$fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
+
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
 # backwards compatibility). Please don't change it unless you know what
@@ -53,12 +61,14 @@ Vagrant.configure("2") do |config|
     # Display the VirtualBox GUI when booting the machine
     vb.gui = false
 
-    # Customize the amount of memory on the VM:
-    vb.memory = "4096"
+    # Customize the amount of resources on the VM:
+    vb.memory = $memory
+    vb.cpus = $cpus
   end
   config.vm.provider "hyperv" do |vb|
-    # Customize the amount of memory on the VM:
-    vb.memory = "4096"
+    # Customize the amount of resources on the VM:
+    vb.memory = $memory
+    vb.cpus = $cpus
   end
 
   #
@@ -72,13 +82,6 @@ Vagrant.configure("2") do |config|
   #   apt-get update
   #   apt-get install -y apache2
   # SHELL
-
-
-  ###########################################################
-  # Settings
-
-  $address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
-  $fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube.example.com)
 
   #######################################
   # Network Configuration
