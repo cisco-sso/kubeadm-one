@@ -6,8 +6,8 @@
 
 $memory = 4096  # In megabytes
 $cpus   = 1
-$address = "" # Set this if you want to set a static IP alias on eth0 (e.g. "192.168.3.13")
-$fqdn = ""    # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
+$macaddress = "0A0000000001"  # Pin to a local mac address for Static DHCP assignment
+$fqdn = ""  # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
 
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
@@ -64,11 +64,13 @@ Vagrant.configure("2") do |config|
     # Customize the amount of resources on the VM:
     vb.memory = $memory
     vb.cpus = $cpus
+    vb.mac = $macaddress
   end
   config.vm.provider "hyperv" do |vb|
     # Customize the amount of resources on the VM:
     vb.memory = $memory
     vb.cpus = $cpus
+    vb.mac = $macaddress
   end
 
   #
@@ -91,24 +93,18 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell",
                       privileged: false,
                       run: "always",
-                      args: [ $address, $fqdn ],
+                      args: [ $fqdn ],
                       inline: <<-SHELL
-    # Add a staticIP alias
-    if [[ ! -z "$1" ]]; then
-      sudo ifconfig eth0:1 $1
-      ifconfig eth0:1
-    fi
-
     # Fix line endins for Windows machines
     sudo apt-get install -y dos2unix
     pushd /vagrant
     dos2unix kubeadm-one
 
     # Launch the setup script
-    if [[ -z "$2" ]]; then
+    if [[ -z "$1" ]]; then
       sudo ./kubeadm-one --dotfiles --force --local-only
     else
-      sudo ./kubeadm-one --dotfiles --force --apiserver-cert-extra-sans="$2"
+      sudo ./kubeadm-one --dotfiles --force --apiserver-cert-extra-sans="$1"
     fi
   SHELL
 end

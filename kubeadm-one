@@ -119,14 +119,14 @@ function main() {
 
     # Check local and remote install args
     if [[ "$LOCAL_ONLY" == "true" ]] && [[ ! -z "$APISERVER_CERT_EXTRA_SANS" ]] ; then
-	echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
-	usage
-	exit 1
+        echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
+        usage
+        exit 1
     fi
     if [[ "$LOCAL_ONLY" == "false" ]] && [[ -z "$APISERVER_CERT_EXTRA_SANS" ]] ; then
-	echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
-	usage
-	exit 1
+        echo "ERROR: Exactly one of '--local-only' and '--apiserver-cert-extra-sans' must be set"
+        usage
+        exit 1
     fi
 
     # Ensure this script is run via sudo
@@ -146,7 +146,7 @@ function main() {
     # Main program
 
     if [[ "$DOTFILES" == "true" ]]; then
-	install_system_conveniences
+        install_system_conveniences
     fi
 
     # Permanently disable swap, since kubernetes will not work with swap
@@ -164,13 +164,13 @@ function main() {
 
     # If kubeadm is installed but kubernetes is not running, then reset kubeadmin
     if command -v kubeadm && ! kubectl cluster-info && [[ -f /etc/kubernetes/pki/apiserver.crt ]]; then
-	if [[ "$FORCE" == "true" ]]; then
-	    kubeadm reset -f
-	else
-	    kubeadm reset
-	fi
-	# Remove any old leftover test-pvc's from failed installs
-	rm -f /var/kubernetes/default-hostpath-test-claim-pvc-*
+        if [[ "$FORCE" == "true" ]]; then
+            kubeadm reset -f
+        else
+            kubeadm reset
+        fi
+        # Remove any old leftover test-pvc's from failed installs
+        rm -f /var/kubernetes/default-hostpath-test-claim-pvc-*
     fi
 
     # Initialize the single node kubernetes cluster
@@ -278,19 +278,29 @@ EOF
 }
 
 function initialize_kubeadm() {
-    apiserver_cert_extra_sans=""
-    if [ ! -z "$1" ]; then
-        apiserver_cert_extra_sans="--apiserver-cert-extra-sans=$1"
-    fi
-
-    pod_network_cidr="$2"
-
-    # Initialize kubeadm
+    # Pull all images
     kubeadm config images pull
-    kubeadm init \
-        --pod-network-cidr=$pod_network_cidr \
-        --ignore-preflight-errors=NumCPU \
-        $apiserver_cert_extra_sans
+
+    if [[ -f "kubeadm.conf" ]]; then
+        # If a kubeadm configuration file exists, use it and ignore all other settings
+        echo "Using existing kubeadm.conf file"
+        kubeadm init --ignore-preflight-errors=NumCPU --config kubeadm.conf
+    else
+        # Else, use the command line args
+
+        apiserver_cert_extra_sans=""
+        if [ ! -z "$1" ]; then
+            apiserver_cert_extra_sans="--apiserver-cert-extra-sans=$1"
+        fi
+
+        pod_network_cidr="$2"
+
+        # Initialize kubeadm
+        kubeadm init \
+                --pod-network-cidr=$pod_network_cidr \
+                --ignore-preflight-errors=NumCPU \
+                $apiserver_cert_extra_sans
+    fi
 }
 
 function configure_kubernetes() {
@@ -355,6 +365,7 @@ EOF
 
 function configure_kubeconfig() {
     remote_access_uri=${1:-}
+    remote_access_domain=$(echo "$remote_access_uri"| cut -f2- -d.)
 
     # Setup user's kubeconfig
     mkdir -p $HOME/.kube
@@ -363,15 +374,16 @@ function configure_kubeconfig() {
 
     # Setup the remote kubeconfig
     if [[ ! -z "$remote_access_uri" ]]; then
-	cp -f /etc/kubernetes/admin.conf $HOME/.kube/config.remote
-	sed -i 's/kubernetes-//g' $HOME/.kube/config.remote
-	sed -i "s/admin@kubernetes/$remote_access_uri/g" $HOME/.kube/config.remote
-	sed -i "s/kubernetes/$remote_access_uri/g" $HOME/.kube/config.remote
+        cp -f /etc/kubernetes/admin.conf $HOME/.kube/config.remote
+        sed -i 's/kubernetes-//g' $HOME/.kube/config.remote
+        sed -i "s/admin@kubernetes/$remote_access_domain/g" $HOME/.kube/config.remote
+        sed -i "s/kubernetes/$remote_access_domain/g" $HOME/.kube/config.remote
 
-	ingress_external_lb_ip=$(kubectl get svc| grep nginx-ingress-controller | awk '{print $4}')
-	sed -i "s/$ingress_external_lb_ip/$remote_access_uri/g" $HOME/.kube/config.remote
+        KUBECONFIG=/etc/kubernetes/admin.conf
+        ingress_external_lb_ip=$(kubectl get svc| grep nginx-ingress-controller | awk '{print $4}')
+        sed -i "s/$ingress_external_lb_ip/$remote_access_uri/g" $HOME/.kube/config.remote
 
-	echo "Remote KUBECONFIG created at $HOME/.kube/config.remote"
+        echo "Remote KUBECONFIG created at $HOME/.kube/config.remote"
     fi
 
     # Ensure ownership
