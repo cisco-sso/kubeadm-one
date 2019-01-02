@@ -85,6 +85,9 @@ Options:
               * Specify range of IP addresses for the pod network. If set, the
                 control plane will automatically allocate CIDRs for every node.
                 Default: '--pod-network-cidr=10.244.0.0/16'
+  -n=<string> --cni=<string>
+              * Specifies container-network-interface, Either 'calico'
+                (default) or 'flannel'
   -d --dotfiles
               * Will setup dotfiles in a machine (e.g. for vagrant installs)
   -f --force  * Do not prompt.  Assume yes for all prompts

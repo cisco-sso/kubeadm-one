@@ -49,6 +49,9 @@ Options:
               * Specify range of IP addresses for the pod network. If set, the
                 control plane will automatically allocate CIDRs for every node.
                 Default: '--pod-network-cidr=10.244.0.0/16'
+  -n=<string> --cni=<string>
+              * Specifies container-network-interface, Either 'calico'
+                (default) or 'flannel'
   -d --dotfiles
               * Will setup dotfiles in a machine (e.g. for vagrant installs)
   -f --force  * Do not prompt.  Assume yes for all prompts
@@ -80,6 +83,10 @@ function main() {
                 POD_NETWORK_CIDR="${i#*=}"
                 shift # past argument=value
                 ;;
+            -n=*|--cni=*)
+                CONTAINER_NETWORK_INTERFACE="${i#*=}"
+                shift # past argument=value
+                ;;
             -d|--dotfiles)
                 DOTFILES=true
                 shift # past argument=value
@@ -105,6 +112,7 @@ function main() {
     LOCAL_ONLY=${LOCAL_ONLY:-false}
     APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS:-}
     POD_NETWORK_CIDR=${POD_NETWORK_CIDR:-10.244.0.0/16}
+    CONTAINER_NETWORK_INTERFACE=${CONTAINER_NETWORK_INTERFACE:-calico}
     DOTFILES=${DOTFILES:-false}
     FORCE=${FORCE:-false}
 
@@ -113,6 +121,7 @@ function main() {
     echo "  LOCAL_ONLY=${LOCAL_ONLY}"
     echo "  APISERVER_CERT_EXTRA_SANS=${APISERVER_CERT_EXTRA_SANS}"
     echo "  POD_NETWORK_CIDR=${POD_NETWORK_CIDR}"
+    echo "  CONTAINER_NETWORK_INTERFACE=${CONTAINER_NETWORK_INTERFACE}"
     echo "  DOTFILES=${DOTFILES}"
     echo "  FORCE=${FORCE}"
     echo
@@ -179,7 +188,7 @@ function main() {
     fi
 
     # Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
-    configure_kubernetes
+    configure_kubernetes "$POD_NETWORK_CIDR" "$CONTAINER_NETWORK_INTERFACE"
 
     # Test that the loadbalancer and storageclass provider work
     verify_setup
@@ -305,14 +314,27 @@ function initialize_kubeadm() {
 
 function configure_kubernetes() {
 
+    pod_network_cidr="$1"
+    container_network_interface="$2"
+
     # Configure kubeconfig for remainder of script
     export KUBECONFIG=/etc/kubernetes/admin.conf
 
     ## Remove master taints
     kubectl taint nodes --all node-role.kubernetes.io/master- || true
 
-    ## Deploy a pod network (e.g. flannel)
-    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
+    container_network_interface="calico"
+    ## Deploy a pod network
+    if [[ "$container_network_interface" == "calico" ]]; then
+        echo "Deploying calico CNI"
+        kubectl apply -f https://docs.projectcalico.org/v3.3/getting-started/kubernetes/installation/hosted/rbac-kdd.yaml
+        curl -fSsL https://docs.projectcalico.org/v3.3/getting-started/kubernetes/installation/hosted/kubernetes-datastore/calico-networking/1.7/calico.yaml | \
+            sed "s@192.168.0.0/16@$pod_network_cidr@g" | \
+            kubectl apply -f -
+    else
+        echo "Deploying flannel CNI"
+        kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/bc79dd1505b0c8681ece4de4c0d86c5cd2643275/Documentation/kube-flannel.yml
+    fi
 
     # Install helm
     if ! command -v helm; then
