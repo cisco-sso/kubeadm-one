@@ -57,15 +57,16 @@ Vagrant.configure("2") do |config|
   # backing providers for Vagrant. These expose provider-specific options.
   # Example for VirtualBox:
   #
-  config.vm.provider "virtualbox" do |vb|
+  config.vm.provider "virtualbox" do |vb, override|
     # Display the VirtualBox GUI when booting the machine
     vb.gui = false
 
     # Customize the amount of resources on the VM:
     vb.memory = $memory
     vb.cpus = $cpus
-    vb.mac = $macaddress
+    override.vm.network "public_network", :mac => $macaddress
   end
+
   config.vm.provider "hyperv" do |vb|
     # Customize the amount of resources on the VM:
     vb.memory = $memory

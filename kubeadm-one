@@ -185,10 +185,11 @@ function main() {
     # Initialize the single node kubernetes cluster
     if ! kubectl cluster-info &>/dev/null; then
         initialize_kubeadm "$APISERVER_CERT_EXTRA_SANS" "$POD_NETWORK_CIDR"
+
+	# Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
+	configure_kubernetes "$POD_NETWORK_CIDR" "$CONTAINER_NETWORK_INTERFACE"
     fi
 
-    # Load the Kubernetes overlay network provider, storageclass provier, ingress, and loadbalancer
-    configure_kubernetes "$POD_NETWORK_CIDR" "$CONTAINER_NETWORK_INTERFACE"
 
     # Test that the loadbalancer and storageclass provider work
     verify_setup
@@ -419,13 +420,14 @@ function wait_check() {
     
     echo "CHECK: Waiting for $noun to become $adjective"
     error=true
-    for i in `seq 1 60`; do
+    num_cycles=180
+    for i in `seq 1 $num_cycles`; do
         if eval $binary_test &>/dev/null; then
             echo "  SUCCESS: $noun have become $adjective"
             error=false
             break
         else
-            echo "  WAITING: $noun have not yet become $adjective.  Trying again after 2 seconds"
+            echo "  WAITING: $noun have not yet become $adjective.  Trying again after 2 seconds ($i/$num_cycles)"
             error=true
             sleep 2
         fi
