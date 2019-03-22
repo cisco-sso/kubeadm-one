@@ -104,7 +104,7 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell",
                       privileged: false,
                       run: "always",
-                      args: [ $sans ],
+                      args: "$sans",
                       inline: <<-SHELL
     # Fix line endins for Windows machines
     sudo apt-get install -y dos2unix
