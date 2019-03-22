@@ -5,9 +5,11 @@
 # Settings
 
 $memory = 4096  # In megabytes
-$cpus   = 1
-$macaddress = "0A0000000001"  # Pin to a local mac address for Static DHCP assignment
-$fqdn = ""  # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
+$cpus   = 4
+$fqdn = "api.kube1.example.com"  # Set this if you will access the kube cluster remotely (e.g. "api.kube1.example.com")
+$public = false  # Public networking (true). Host/private networking (false).
+$public_macaddress = "0AE000000001"  # Pin to a local mac address for Static DHCP assignment
+$private_ip = "192.168.33.10"
 
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
@@ -40,7 +42,10 @@ Vagrant.configure("2") do |config|
 
   # Create a private network, which allows host-only access to the machine
   # using a specific IP.
-  # config.vm.network "private_network", ip: "192.168.33.10"
+  if $public == false
+    config.vm.network "private_network", ip: $private_ip
+    $sans = $fqdn + ',' + $private_ip
+  end
 
   # Create a public network, which generally matched to bridged network.
   # Bridged networks make the machine appear as another physical device on
@@ -64,14 +69,19 @@ Vagrant.configure("2") do |config|
     # Customize the amount of resources on the VM:
     vb.memory = $memory
     vb.cpus = $cpus
-    override.vm.network "public_network", :mac => $macaddress
+    if $public
+      override.vm.network "public_network", :mac => $public_macaddress
+      $sans = $fqdn
+    end
   end
 
-  config.vm.provider "hyperv" do |vb|
+  config.vm.provider "hyperv" do |hv|
     # Customize the amount of resources on the VM:
-    vb.memory = $memory
-    vb.cpus = $cpus
-    vb.mac = $macaddress
+    hv.memory = $memory
+    hv.cpus = $cpus
+    if $public
+      hv.mac = $public_macaddress
+    end
   end
 
   #
@@ -94,7 +104,7 @@ Vagrant.configure("2") do |config|
   config.vm.provision "shell",
                       privileged: false,
                       run: "always",
-                      args: [ $fqdn ],
+                      args: [ $sans ],
                       inline: <<-SHELL
     # Fix line endins for Windows machines
     sudo apt-get install -y dos2unix
@@ -107,5 +117,8 @@ Vagrant.configure("2") do |config|
     else
       sudo ./kubeadm-one --dotfiles --force --apiserver-cert-extra-sans="$1"
     fi
+
+    # Copy the remote KUBECONFIG to a host-accessible directory.
+    cp -f ~/.kube/config.remote .
   SHELL
 end
